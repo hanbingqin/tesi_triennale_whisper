@@ -10,7 +10,7 @@ from queue import Queue
 #Energy level for mic to detect.
 #energy_threshold = 970
 #How real time the recording is in seconds, avevo detto 5 qui e 2 sotto, in questo modo non farà mai in line decentemente
-record_timeout = 5
+record_timeout = 6
 #How much empty space between recordings before we consider it a new line in the transcription.
 phrase_timeout = 3
 # The last time a recording was retrieved from the queue.
