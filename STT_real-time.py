@@ -7,108 +7,99 @@ import time
 import keyboard
 from queue import Queue
 
-#Energy level for mic to detect.
-#energy_threshold = 970
-#How real time the recording is in seconds, avevo detto 5 qui e 2 sotto, in questo modo non farà mai in line decentemente
+
+#Dimensione chunk audio
 record_timeout = 6
-#How much empty space between recordings before we consider it a new line in the transcription.
+#Quantità di silenzio tra le registrazioni prima di iniziare una nuova riga nella trascrizione.
 phrase_timeout = 3
-# The last time a recording was retrieved from the queue.
+#L'ultima volta in cui una registrazione è stata recuperata dalla queue.
 phrase_time = None
-# Thread safe Queue for passing data from the threaded recording callback.
+#Coda thread-safe per il passaggio di dati con record_callback.
 data_queue = Queue()
 
-# We use SpeechRecognizer to record our audio because it has a nice feature where it can detect when speech ends.
+#Utilizziamo SpeechRecognizer per registrare l'audio perché offre una  funzionalità interessante che consente di rilevare la fine del parlato.
 recorder = sr.Recognizer()
-# Definitely do this, dynamic energy compensation lowers the energy threshold dramatically to a point where the SpeechRecognizer never stops recording.
+#La compensazione dinamica dell'energia abbassa drasticamente la soglia di energia al punto da rendere recorder sempre attiva.
 recorder.dynamic_energy_threshold = False
 
 source = sr.Microphone(sample_rate=16000)
-#carica modello 
-#options = whisper.DecodingOptions( without_timestamps=True)
+#Carica il modello Whisper di dimensione "medium".
 model =whisper.load_model("medium")
-
 transcription = ['']
 
 with source:
     recorder.adjust_for_ambient_noise(source)
 def record_callback(_, audio:sr.AudioData) -> None:
-    """
-    Threaded callback function to receive audio data when recordings finish.
-    audio: An AudioData containing the recorded bytes.
-    """
-    # Grab the raw bytes and push it into the thread safe queue.
+    #Estrae i byte dall'oggetto audio.
     data = audio.get_raw_data()
+    #Inserisce i dati nella coda thread-safe.
     data_queue.put(data)
 
-# Create a background thread that will pass us raw audio bytes.
-# We could do this manually but SpeechRecognizer provides a nice helper.
+#Crea un thread in background che gestirà la registrazione e invierà i dati grezzi alla coda.
 recorder.listen_in_background(source, record_callback, phrase_time_limit=record_timeout)
 
-# Cue the user we are ready to start
+#Avvisa l'utente che il setup è terminato
 print ("model loaded, start talking \n")
 
-print("\nTranscription:")
+print("\n*press m to mute*\nTranscription:")
 while True:
     try:
         now = time.time()
-        # Pull raw recorded audio from the queue.
+        #Recupera l'audio grezzo registrato dalla coda.
         if not data_queue.empty():
 
             phrase_complete = False
-            # If enough time has passed between recordings, consider the phrase complete.
-            # Clear the current working audio buffer to start over with the new data.
+            #Se è trascorso abbastanza tempo tra le registrazioni,considera la frase completata.
             if phrase_time and now - phrase_time > phrase_timeout:
                 phrase_complete = True
-            # This is the last time we received new audio data from the queue.
+            #Salviamo il tempo di arrivo della registrazione corrente.
             phrase_time = now
             
-            # Combine audio data from queue
+            #Combina i dati audio dalla coda con byte join.
             audio_data = b''.join(data_queue.queue)
             data_queue.queue.clear()
             
-            # Convert in-ram buffer to something the model can use directly without needing a temp file.
-            # Convert data from 16 bit wide integers to floating point with a width of 32 bits.
-            # Clamp the audio stream frequency to a PCM wavelength compatible default of 32768hz max.
+            #Converte i dati da interi a 16 bit in virgola mobile a 32 bit
+            #Normalizza considerando una PCM di 32768 Hz massimo.
             audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
 
-            # Read the transcription.
+            #Effettua e salva la trascrizione.
             result = model.transcribe(audio_np, language="it", fp16=torch.cuda.is_available())
             text = result['text'].strip()
 
-            # If we detected a pause between recordings, add a new item to our transcription.
-            # Otherwise edit the existing one.
+            #Aggiungi una nuova riga alla trascrizione in caso di pausa sufficiente.
             if phrase_complete:
                 transcription.append(text)
-                
+            #Altrimenti modifica quella esistente.     
             else:
-                #print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAELSEEEEEEEEEEEEEEEEEEEE")
                 transcription[-1] = transcription[-1]+" "+text
                 
 
-            # Clear the console to reprint the updated transcription.
+            #Cancella la console per stampare la trascrizione aggiornata.
             os.system('cls')
             for line in transcription:
                 print(line)
-            # Flush stdout.
+            #Svuota lo stdout per evitare righe sovrapposte.
             print('', end='', flush=True)
         else:
-            # Infinite loops are bad for processors, must sleep.
+            #Per evitare cicli infiniti.
             time.sleep(0.5)
+    #Gestione delle interruzioni da tastiera (Ctrl+C).
     except KeyboardInterrupt:
         data_queue.queue.clear()
         break
-
+    #Gestione terminazione programma premendo spazio.
     if keyboard.is_pressed("space"):
         data_queue.queue.clear()
         print("Stopping recording, wait...")
         time.sleep(0.2)
         break
-    #conditions to mute the mic
+    #Gestione del mute con il tasto "m"
     if keyboard.is_pressed("m"):
         data_queue.queue.clear()
         print("muted...muted...")
         print("*press u to unmute*")
+        #Invocare stop_listening termina il recorder in background.
         stop_listening(wait_for_stop=False)
         time.sleep(0.5)
         while not keyboard.is_pressed("u"):
@@ -117,5 +108,6 @@ while True:
         print("unmuted, start talking")
         time.sleep(0.2)
 
+#Una volta terminato il programma, stampiamo l'intera trascrizione.
 print ('\n fuori dal ciclo, trascrizione finale: \n')
 print(transcription)
